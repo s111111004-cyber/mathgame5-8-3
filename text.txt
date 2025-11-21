@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分數的比大小 PK 挑戰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 設定主要字體為 Inter (通用且易讀) */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7ffee; /* 淺黃綠色背景，適合學習 */
+        }
+        /* 定義分數顯示樣式 */
+        .fraction-display {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem; /* 大字體 */
+            font-weight: 700;
+            line-height: 1; /* 調整行高讓分子分母靠近 */
+            margin: 0 1rem;
+            color: #333;
+        }
+        .fraction-separator {
+            width: 100%;
+            height: 4px; /* 扁平的分隔線 */
+            background-color: #333;
+            margin: 2px 0; /* 微調上下間距 */
+        }
+        .numerator {
+            padding-bottom: 5px; /* 給分子一點空間 */
+        }
+        .denominator {
+            padding-top: 5px; /* 給分母一點空間 */
+        }
+        
+        /* 玩家資訊水平顯示在左上/右上 */
+        .player-info {
+            white-space: nowrap;
+            position: absolute;
+            top: 1rem; /* 距離頂部 1rem */
+            font-size: 1.5rem;
+            font-weight: bold;
+            padding: 0.5rem 1rem; /* 增加水平 padding */
+            background: rgba(255, 255, 255, 0.9); /* 更實心的背景 */
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* 更明顯的陰影 */
+            z-index: 10; /* 確保分數在最上層 */
+            transform: none !important; /* 移除所有旋轉 */
+        }
+        #p1-score-display {
+            left: 1rem; 
+        }
+        #p2-score-display {
+            right: 1rem;
+        }
+
+        /* 確保按鈕有足夠的觸控面積 */
+        .symbol-btn {
+            min-height: 48px; /* 最小觸控目標尺寸 */
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <!-- 玩家一資訊 (左上角) -->
+    <div id="p1-score-display" class="player-info text-blue-600 border-b-2 border-blue-400 hidden">
+        玩家一: 0 分
+    </div>
+
+    <!-- 玩家二資訊 (右上角) -->
+    <div id="p2-score-display" class="player-info text-red-600 border-b-2 border-red-400 hidden">
+        玩家二: 0 分
+    </div>
+
+    <div id="app" class="bg-white rounded-2xl shadow-2xl p-6 md:p-10 w-full max-w-4xl text-center border-4 border-lime-600 relative">
+        <!-- 內容將由 JavaScript 動態插入 -->
+    </div>
+
+
+    <script type="text/javascript">
+        // 應用程式 ID 和 Firebase 配置 (即使不使用 Firestore 也要包含這些變數以保持代碼一致性)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // 此版本已移除 Gemini API 相關設定
+
+        const appElement = document.getElementById('app');
+        let currentQuestionIndex = 0;
+        let isAnswerLocked = false; // 防止重複點擊
+
+        let player1Score = 0;
+        let player2Score = 0;
+
+        // 定義鍵盤對應 (功能保留，但 UI 不顯示)
+        const player1Keys = { 'a': '<', 's': '=', 'd': '>' };
+        const player2Keys = { 'j': '<', 'k': '=', 'l': '>' };
+
+        // 問題資料集
+        const questions = [
+            // 視覺題 (3題)
+            { n1: 3, d1: 5, n2: 4, d2: 5, answer: '<', type: 'visual', title: '第 1 題 (長方形輔助)', modelType: 'bar' },
+            { n1: 7, d1: 8, n2: 5, d2: 8, answer: '>', type: 'visual', title: '第 2 題 (圓形輔助)', modelType: 'circle' },
+            { n1: 2, d1: 4, n2: 2, d2: 4, answer: '=', type: 'visual', title: '第 3 題 (正方形輔助)', modelType: 'square' },
+            // 數字題 (5題)
+            { n1: 1, d1: 6, n2: 4, d2: 6, answer: '<', type: 'numeric', title: '第 4 題 (數字比較)' },
+            { n1: 9, d1: 10, n2: 3, d2: 10, answer: '>', type: 'numeric', title: '第 5 題 (數字比較)' },
+            { n1: 5, d1: 12, n2: 5, d2: 12, answer: '=', type: 'numeric', title: '第 6 題 (數字比較)' },
+            { n1: 8, d1: 9, n2: 7, d2: 9, answer: '>', type: 'numeric', title: '第 7 題 (數字比較)' },
+            { n1: 1, d1: 3, n2: 2, d2: 3, answer: '<', type: 'numeric', title: '第 8 題 (數字比較)' }
+        ];
+
+        /**
+         * 創建自訂分數顯示格式的 HTML 結構
+         * @param {number} n 分子 (Numerator)
+         * @param {number} d 分母 (Denominator)
+         * @returns {string} HTML 字串
+         */
+        function createFractionHTML(n, d) {
+            return `
+                <div class="fraction-display w-20">
+                    <div class="numerator">${n}</div>
+                    <div class="fraction-separator"></div>
+                    <div class="denominator">${d}</div>
+                </div>
+            `;
+        }
+
+        /**
+         * 創建長方形圖形表示 (Bar Model)
+         * @param {number} n 分子
+         * @param {number} d 分母
+         * @returns {HTMLElement} 視覺化元素
+         */
+        function createBarModel(n, d) {
+            const container = document.createElement('div');
+            // 長條圖寬度使用 w-40, 讓它在水平排列時更突出
+            container.className = 'flex w-40 h-8 border-2 border-gray-400 rounded-lg overflow-hidden shadow-md mx-auto my-1';
+
+            for (let i = 0; i < d; i++) {
+                const segment = document.createElement('div');
+                // 使用 Tailwind 的 indigo-400 作為填充色
+                segment.className = `flex-1 h-full ${i < n ? 'bg-indigo-400' : 'bg-gray-200'}`;
+                if (i < d - 1) {
+                    segment.style.borderRight = '1px solid #aaa';
+                }
+                container.appendChild(segment);
+            }
+            return container;
+        }
+
+        /**
+         * 創建圓形圖形表示 (Circle Model/餅圖 - 使用 conic-gradient)
+         * @param {number} n 分子
+         * @param {number} d 分母
+         * @returns {HTMLElement} 視覺化元素
+         */
+        function createCircleModel(n, d) {
+            const container = document.createElement('div');
+            container.className = 'w-20 h-20 rounded-full border-2 border-gray-400 shadow-md mx-auto my-1 relative overflow-hidden flex items-center justify-center';
+
+            // 計算填滿的百分比
+            const fillPercentage = (n / d) * 100;
+            
+            // 使用 conic-gradient 創建扇形
+            // 填充色使用深藍色 (#4f46e5 / indigo-600)
+            // 空白色使用淺灰色 (#e5e7eb / gray-200)
+            container.style.background = `conic-gradient(
+                #4f46e5 0% ${fillPercentage}%,
+                #e5e7eb ${fillPercentage}% 100%
+            )`;
+
+            return container;
+        }
+
+        /**
+         * 創建方形圖形表示 (Square Model - 使用 CSS Grid, 專門處理 d=4)
+         * @param {number} n 分子
+         * @param {number} d 分母
+         * @returns {HTMLElement} 視覺化元素
+         */
+        function createSquareModel(n, d) {
+            const squareContainer = document.createElement('div');
+            squareContainer.className = 'w-20 h-20 border-2 border-gray-400 rounded-lg shadow-md mx-auto my-1 overflow-hidden';
+            
+            let cols = 1;
+            if (d === 4) cols = 2; // 2x2 grid
+            else if (d === 9) cols = 3; // 3x3 grid
+            else if (d === 16) cols = 4; // 4x4 grid
+            
+            if (cols > 1) {
+                // 2x2, 3x3, or 4x4 grid
+                squareContainer.classList.add('grid');
+                squareContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                squareContainer.style.gridTemplateRows = `repeat(${cols}, 1fr)`;
+
+                for (let i = 0; i < d; i++) {
+                    const segment = document.createElement('div');
+                    
+                    let classes = `h-full w-full ${i < n ? 'bg-indigo-400' : 'bg-gray-200'}`;
+                    
+                    // 內部邊界線，避免覆蓋外部邊界
+                    if (Math.floor(i / cols) < (cols - 1)) classes += ' border-b border-gray-400';
+                    if (i % cols < (cols - 1)) classes += ' border-r border-gray-400';
+
+                    segment.className = classes;
+                    squareContainer.appendChild(segment);
+                }
+            } else {
+                // 對於非完美平方的分母，退回到長條分割模式，但保持正方形長寬比
+                 squareContainer.classList.add('flex');
+                 for (let i = 0; i < d; i++) {
+                     const segment = document.createElement('div');
+                     segment.className = `flex-1 h-full ${i < n ? 'bg-indigo-400' : 'bg-gray-200'}`;
+                     if (i < d - 1) {
+                         segment.style.borderRight = '1px solid #aaa';
+                     }
+                     squareContainer.appendChild(segment);
+                 }
+            }
+            return squareContainer;
+        }
+
+        /**
+         * 創建視覺模型的分發器 (Dispatcher)
+         * @param {string} type 模型類型 ('bar', 'circle', 'square')
+         * @param {number} n 分子
+         * @param {number} d 分母
+         * @returns {HTMLElement} 視覺化元素
+         */
+        function createVisualModel(type, n, d) {
+            switch (type) {
+                case 'bar':
+                    return createBarModel(n, d);
+                case 'circle':
+                    return createCircleModel(n, d);
+                case 'square':
+                    return createSquareModel(n, d);
+                default:
+                    return createBarModel(n, d); // 預設使用長條圖
+            }
+        }
+
+        /**
+         * 更新分數顯示
+         */
+        function updateScoreDisplay() {
+            const p1Display = document.getElementById('p1-score-display');
+            const p2Display = document.getElementById('p2-score-display');
+
+            if (p1Display) {
+                p1Display.textContent = `玩家一: ${player1Score} 分`;
+            }
+            if (p2Display) {
+                p2Display.textContent = `玩家二: ${player2Score} 分`;
+            }
+        }
+        
+        /**
+         * 渲染起始頁面
+         */
+        function renderStartScreen() {
+            player1Score = 0;
+            player2Score = 0;
+            
+            // 移除舊的鍵盤監聽器
+            document.removeEventListener('keydown', handleKeyboardInput);
+
+            // 顯示分數顯示元素
+            document.getElementById('p1-score-display').classList.remove('hidden');
+            document.getElementById('p2-score-display').classList.remove('hidden');
+
+            appElement.innerHTML = `
+                <div class="space-y-8 p-6 md:p-12 pt-12"> <!-- 增加 pt-12 讓內容避開頂部計分板 -->
+                    <h1 class="text-5xl font-extrabold text-lime-700">單元 8-3 分數的比大小 PK 挑戰</h1>
+                    <p class="text-2xl text-red-500 font-bold">雙人 PK 模式！先答對者得分！</p>
+                    <div class="flex flex-col md:flex-row justify-around text-left text-xl space-y-4 md:space-y-0">
+                        <div class="bg-blue-100 p-4 rounded-lg shadow-inner border-l-4 border-blue-500 flex-1 mx-2">
+                            <h3 class="font-bold text-blue-700">⚔️ 玩家一 (左上)</h3>
+                            <p class="text-sm text-gray-600 mt-2">請點擊螢幕按鈕。</p>
+                            <ul class="list-disc list-inside mt-1 space-y-1">
+                                <li>點擊：大於 (&gt;)</li>
+                                <li>點擊：等於 (=)</li>
+                                <li>點擊：小於 (&lt;)</li>
+                            </ul>
+                        </div>
+                        <div class="bg-red-100 p-4 rounded-lg shadow-inner border-r-4 border-red-500 flex-1 mx-2">
+                            <h3 class="font-bold text-red-700">🛡️ 玩家二 (右上)</h3>
+                            <p class="text-sm text-gray-600 mt-2">請點擊螢幕按鈕。</p>
+                            <ul class="list-disc list-inside mt-1 space-y-1">
+                                <li>點擊：大於 (&gt;)</li>
+                                <li>點擊：等於 (=)</li>
+                                <li>點擊：小於 (&lt;)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <button id="startButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 transform hover:scale-105 text-2xl mt-8">
+                        開始 PK！ (${questions.length} 題)
+                    </button>
+                    <p class="text-sm text-gray-400 mt-6">
+                        小提示：同分母分數比較時，只需要看分子的大小喔！
+                    </p>
+                </div>
+            `;
+            document.getElementById('startButton').addEventListener('click', () => {
+                currentQuestionIndex = 0;
+                renderQuestion();
+            });
+            updateScoreDisplay(); // 確保分數重置為 0
+        }
+
+        /**
+         * 渲染題目頁面
+         */
+        function renderQuestion() {
+            if (currentQuestionIndex >= questions.length) {
+                renderCompletionScreen();
+                return;
+            }
+            
+            // 移除舊的鍵盤監聽器
+            document.removeEventListener('keydown', handleKeyboardInput);
+
+            const q = questions[currentQuestionIndex];
+            const isVisual = q.type === 'visual';
+            isAnswerLocked = false; // 解鎖答案選擇
+
+            // 確保分數顯示元素可見
+            document.getElementById('p1-score-display').classList.remove('hidden');
+            document.getElementById('p2-score-display').classList.remove('hidden');
+            
+            let coreComparisonHTML = '';
+
+            if (isVisual) {
+                // 新版面：圖形和分數垂直對齊，然後兩組並排
+                coreComparisonHTML = `
+                    <div class="flex items-start justify-center space-x-4 md:space-x-12">
+                        <!-- 左側分數及圖形 -->
+                        <div class="flex flex-col items-center">
+                            <div id="visual1" class="mb-4"></div>
+                            ${createFractionHTML(q.n1, q.d1)}
+                        </div>
+
+                        <!-- 比較符號 (與分數中央對齊) -->
+                        <div id="result-symbol" class="border-4 border-black bg-white h-16 w-16 flex items-center justify-center text-5xl font-extrabold text-gray-500 mt-20"></div>
+                        
+                        <!-- 右側分數及圖形 -->
+                        <div class="flex flex-col items-center">
+                            <div id="visual2" class="mb-4"></div>
+                            ${createFractionHTML(q.n2, q.d2)}
+                        </div>
+                    </div>
+                `;
+            } else {
+                // 數字題維持單行水平排列
+                coreComparisonHTML = `
+                    <div class="flex items-center justify-center space-x-2 md:space-x-6 h-28"> <!-- 增加高度保持與視覺題的視覺平衡 -->
+                        ${createFractionHTML(q.n1, q.d1)}
+                        <div id="result-symbol" class="border-4 border-black bg-white h-16 w-16 flex items-center justify-center text-5xl font-extrabold text-gray-500"></div>
+                        ${createFractionHTML(q.n2, q.d2)}
+                    </div>
+                `;
+            }
+
+
+            appElement.innerHTML = `
+                <div class="space-y-4 pt-12"> <!-- 增加 pt-12 避免內容被頂部計分板遮擋 -->
+                    <div class="text-xl font-semibold text-lime-600">PK 挑戰 - ${q.title} (${currentQuestionIndex + 1}/${questions.length})</div>
+                    <p class="text-3xl font-extrabold text-gray-800 mb-6">請快速選擇正確的比較符號！</p>
+                    
+                    <!-- 題目主體 -->
+                    ${coreComparisonHTML}
+                    
+                    <!-- 玩家操作區：修正為永遠左右並排 -->
+                    <div class="flex flex-row justify-between mt-8 md:mt-10 space-x-2">
+                        <!-- 玩家一按鈕 (左) -->
+                        <div id="p1-controls" class="flex flex-col space-y-3 p-4 bg-blue-50 rounded-lg border-2 border-blue-400 w-[49%]">
+                            <h3 class="text-lg font-bold text-blue-700">玩家一</h3>
+                            <!-- 確保按鈕有足夠的觸控面積 -->
+                            <!-- 順序調整：大於 (>) -->
+                            <button data-player="1" data-answer=">" class="symbol-btn p1-btn text-4xl bg-blue-400 active:bg-blue-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> &gt; </button>
+                            <!-- 順序調整：等於 (=) -->
+                            <button data-player="1" data-answer="=" class="symbol-btn p1-btn text-4xl bg-blue-400 active:bg-blue-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> = </button>
+                            <!-- 順序調整：小於 (<) -->
+                            <button data-player="1" data-answer="<" class="symbol-btn p1-btn text-4xl bg-blue-400 active:bg-blue-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> &lt; </button>
+                        </div>
+
+                        <!-- 玩家二按鈕 (右) -->
+                        <div id="p2-controls" class="flex flex-col space-y-3 p-4 bg-red-50 rounded-lg border-2 border-red-400 w-[49%]">
+                            <h3 class="text-lg font-bold text-red-700">玩家二</h3>
+                            <!-- 順序調整：大於 (>) -->
+                            <button data-player="2" data-answer=">" class="symbol-btn p2-btn text-4xl bg-red-400 active:bg-red-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> &gt; </button>
+                            <!-- 順序調整：等於 (=) -->
+                            <button data-player="2" data-answer="=" class="symbol-btn p2-btn text-4xl bg-red-400 active:bg-red-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> = </button>
+                            <!-- 順序調整：小於 (<) -->
+                            <button data-player="2" data-answer="<" class="symbol-btn p2-btn text-4xl bg-red-400 active:bg-red-600 text-white font-extrabold py-3 rounded-xl shadow-md transition duration-150 transform active:scale-95"> &lt; </button>
+                        </div>
+                    </div>
+                    
+                    <div id="feedback" class="h-10 mt-6 text-xl font-bold"></div>
+                    
+                    <div class="flex justify-center space-x-4">
+                        <button id="nextButton" class="hidden bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition duration-300 transform hover:scale-105 text-lg mt-4">
+                            下一題
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // 渲染視覺模型 (只適用於視覺題)
+            if (isVisual) {
+                const visual1Container = document.getElementById('visual1');
+                const visual2Container = document.getElementById('visual2');
+
+                // 顯示兩組圖形，強調比較
+                visual1Container.appendChild(createVisualModel(q.modelType, q.n1, q.d1));
+                visual2Container.appendChild(createVisualModel(q.modelType, q.n2, q.d2));
+            }
+
+            // 重新綁定事件監聽器，使用 e.currentTarget 確保點擊或觸控都能取得正確的按鈕
+            document.querySelectorAll('.symbol-btn').forEach(button => {
+                // 移除 hover:bg-xxx 樣式，改用 active:bg-xxx 提升觸控體驗
+                button.classList.remove('hover:bg-blue-500', 'hover:bg-red-500', 'hover:scale-105');
+                button.addEventListener('click', (e) => handleAnswer(e.currentTarget.dataset.player, e.currentTarget.dataset.answer, e.currentTarget));
+            });
+            document.getElementById('nextButton').addEventListener('click', () => {
+                currentQuestionIndex++;
+                renderQuestion();
+            });
+
+
+            // 啟用鍵盤監聽器
+            document.addEventListener('keydown', handleKeyboardInput);
+            updateScoreDisplay();
+        }
+
+        /**
+         * 處理鍵盤輸入
+         * @param {KeyboardEvent} event 鍵盤事件
+         */
+        function handleKeyboardInput(event) {
+            if (isAnswerLocked) return;
+            const key = event.key.toLowerCase();
+            
+            let player, answer, targetButton;
+
+            if (player1Keys.hasOwnProperty(key)) {
+                player = '1';
+                answer = player1Keys[key];
+                targetButton = document.querySelector(`.p1-btn[data-answer="${answer}"]`);
+            } else if (player2Keys.hasOwnProperty(key)) {
+                player = '2';
+                answer = player2Keys[key];
+                targetButton = document.querySelector(`.p2-btn[data-answer="${answer}"]`);
+            } else {
+                return; // 忽略非遊戲鍵
+            }
+
+            if (targetButton) {
+                // 模擬點擊效果
+                targetButton.classList.add('scale-95', 'opacity-80');
+                setTimeout(() => targetButton.classList.remove('scale-95', 'opacity-80'), 150);
+                handleAnswer(player, answer, targetButton);
+            }
+        }
+
+        /**
+         * 處理使用者點擊/鍵盤輸入答案
+         * @param {string} player 玩家 '1' 或 '2'
+         * @param {string} userAnswer 玩家選擇的符號
+         * @param {HTMLElement} targetElement 觸發事件的按鈕元素
+         */
+        function handleAnswer(player, userAnswer, targetElement) {
+            if (isAnswerLocked) return;
+
+            const correctAnswer = questions[currentQuestionIndex].answer;
+            const feedbackElement = document.getElementById('feedback');
+            const resultSymbolElement = document.getElementById('result-symbol');
+            const nextButton = document.getElementById('nextButton');
+
+
+            // 檢查答案
+            if (userAnswer === correctAnswer) {
+                isAnswerLocked = true; // 鎖定遊戲，防止另一人作答
+
+                // 移除鍵盤監聽器
+                document.removeEventListener('keydown', handleKeyboardInput);
+
+                // 更新分數
+                if (player === '1') {
+                    player1Score++;
+                } else {
+                    player2Score++;
+                }
+                updateScoreDisplay();
+
+                // 顯示正確符號
+                resultSymbolElement.textContent = correctAnswer;
+                resultSymbolElement.classList.remove('text-gray-500');
+                resultSymbolElement.classList.add('text-green-600', 'animate-bounce');
+
+
+                // 給予反饋
+                feedbackElement.textContent = `玩家 ${player} 答對了！恭喜獲得 1 分！ 🎉`;
+                feedbackElement.classList.remove('text-red-500');
+                feedbackElement.classList.add('text-green-600');
+
+                // 標示贏家按鈕
+                targetElement.classList.remove('bg-blue-400', 'bg-red-400', 'active:bg-blue-600', 'active:bg-red-600');
+                targetElement.classList.add('bg-yellow-500', 'ring-4', 'ring-yellow-300', 'text-gray-800');
+
+                // 禁用所有按鈕
+                document.querySelectorAll('.symbol-btn').forEach(btn => {
+                    btn.disabled = true;
+                    btn.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-none', 'active:scale-100');
+                });
+                
+                // 顯示下一題按鈕
+                nextButton.classList.remove('hidden');
+
+            } else {
+                // 錯誤答案：給予短暫視覺懲罰 (閃爍)
+                targetElement.classList.remove('bg-blue-400', 'bg-red-400', 'active:bg-blue-600', 'active:bg-red-600');
+                targetElement.classList.add('bg-red-200', 'ring-2', 'ring-red-500', 'animate-pulse');
+                
+                // 讓按鈕在錯誤時禁用短暫時間，避免連點
+                targetElement.disabled = true;
+
+                setTimeout(() => {
+                    targetElement.classList.remove('bg-red-200', 'ring-2', 'ring-red-500', 'animate-pulse');
+                    if (player === '1') {
+                        targetElement.classList.add('bg-blue-400', 'active:bg-blue-600');
+                    } else {
+                        targetElement.classList.add('bg-red-400', 'active:bg-red-600');
+                    }
+                    targetElement.disabled = false; // 重新啟用按鈕
+                }, 300);
+
+                // 提示另一位玩家
+                feedbackElement.textContent = `玩家 ${player} 答錯了！換另一位試試看！ 🤔`;
+                feedbackElement.classList.remove('text-green-600');
+                feedbackElement.classList.add('text-red-500');
+            }
+        }
+
+        /**
+         * 渲染完成頁面
+         */
+        function renderCompletionScreen() {
+            document.removeEventListener('keydown', handleKeyboardInput);
+            
+            // 隱藏分數顯示元素
+            document.getElementById('p1-score-display').classList.add('hidden');
+            document.getElementById('p2-score-display').classList.add('hidden');
+            
+            let winnerMessage;
+            let winnerColor;
+
+            if (player1Score > player2Score) {
+                winnerMessage = `🏆 恭喜玩家一贏得勝利！`;
+                winnerColor = 'text-blue-600';
+            } else if (player2Score > player1Score) {
+                winnerMessage = `🏆 恭喜玩家二贏得勝利！`;
+                winnerColor = 'text-red-600';
+            } else {
+                winnerMessage = `🤝 雙方平手！真是勢均力敵的比賽！`;
+                winnerColor = 'text-yellow-600';
+            }
+
+            appElement.innerHTML = `
+                <div class="space-y-8 p-6 md:p-12">
+                    <h1 class="text-6xl font-extrabold text-lime-700 animate-pulse">挑戰結束！</h1>
+                    <p class="text-4xl font-bold ${winnerColor}">${winnerMessage}</p>
+                    <div class="flex justify-around text-3xl font-semibold">
+                        <p class="text-blue-600">玩家一得分：${player1Score} 分</p>
+                        <p class="text-red-600">玩家二得分：${player2Score} 分</p>
+                    </div>
+                    <button id="restartButton" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 transform hover:scale-105 text-xl mt-4">
+                        再玩一次 PK！
+                    </button>
+                </div>
+            `;
+            document.getElementById('restartButton').addEventListener('click', renderStartScreen);
+            // 不需要再呼叫 updateScoreDisplay，因為結束畫面已經顯示最終分數
+        }
+
+        // 應用程式啟動點
+        window.onload = function() {
+            // 初始化時直接顯示開始頁面
+            renderStartScreen();
+        };
+
+        // 為了遵循 Immersive 環境的規範，雖然本 app 不使用 Firestore，
+        // 仍需確保不會因為未定義的 Firebase 變數而報錯。
+        // 以下為 Firebase 相關的空函數，確保代碼健壯性。
+        if (typeof initializeApp === 'undefined') {
+            const initializeApp = () => ({});
+            const getAuth = () => ({});
+            const getFirestore = () => ({});
+        }
+    </script>
+</body>
+</html>
